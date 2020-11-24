@@ -1,0 +1,159 @@
+#include <ESP8266WebServer.h> 
+#include <ESP8266HTTPUpdateServer.h> 
+#include <ESP8266WiFi.h> 
+#include <ESP8266HTTPClient.h> 
+
+const int buttonPin = D2; 
+const int ledPin = D7; 
+char push_data[200]; 
+int addr = 0; 
+byte sensorInterrupt = 0; 
+float calibrationFactor = 4.5; 
+volatile byte pulseCount; 
+float flowRate; 
+unsigned int flowMilliLitres; 
+unsigned long totalMilliLitres; 
+unsigned long oldTime; 
+
+char * ssid = "Moto G5 Plus_8144"; 
+char * password = "motog5plus"; 
+char server[]="api.thingspeak.com"; 
+HTTPClient http; 
+
+void setup() 
+{
+Serial.begin(115200); 
+delay(10); 
+Serial.println('\n'); 
+startWIFI(); 
+pinMode(buttonPin, INPUT); 
+pinMode(ledPin, OUTPUT); 
+pulseCount = 0; 
+flowRate = 0.0; 
+flowMilliLitres = 0; 
+totalMilliLitres = 0; 
+oldTime = 0; 
+digitalWrite(buttonPin, HIGH); 
+attachInterrupt(digitalPinToInterrupt(buttonPin), pulseCounter, RISING); 
+}
+
+void loop() 
+{
+if (WiFi.status() == WL_CONNECTED && (millis()  oldTime) > 1000) 
+{
+detachInterrupt(sensorInterrupt); 
+flowRate = ((1000.0 / (millis()  oldTime)) * pulseCount) / calibrationFactor; 
+oldTime = millis(); 
+flowMilliLitres = (flowRate / 60) * 1000; 
+totalMilliLitres += flowMilliLitres; 
+unsigned int frac; 
+Serial.print("Flow rate: "); 
+Serial.print(int(flowRate)); 
+Serial.print("."); 
+frac = (flowRate  int(flowRate)) * 10; 
+Serial.print(frac, DEC); 
+Serial.print("L/min"); 
+Serial.print(" Current Liquid Flowing: "); 
+Serial.print(flowMilliLitres); 
+Serial.print("mL/Sec"); 
+Serial.print(" Output Liquid Quantity: "); 
+Serial.print(totalMilliLitres); 
+Serial.println("mL"); 
+if (flowRate > 0) 
+{
+digitalWrite(ledPin, HIGH); 
+delay(100); 
+Serial.printf(push_data,"https://api.thingspeak.com/update?api_key=6AXQ45BKNNC8Y77E=%d", int(flowRate), int(frac), flowMilliLitres, totalMilliLitres); 
+Serial.printf("%s\n", push_data); 
+http.begin(push_data); 
+digitalWrite(ledPin, LOW); 
+delay(100); 
+Serial.printf("now uploading %d",totalMilliLitres); 
+WiFiClient client; 
+Serial.printf("now connecting to server %s",server); 
+if(client.connect(server,80)) 
+{ 
+client.print("GET /update?api_key=6AXQ45BKNNC8Y77E&field1="); 
+client.print(totalMilliLitres); 
+client.print(flowRate); 
+client.println(" "); 
+client.print("Host: "); 
+client.print(server); 
+client.print("connection close"); 
+client.println(); 
+}
+else 
+{ 
+Serial.println(" "); 
+}
+while(client.connected()) 
+{ 
+if(client.available()) 
+{ 
+char cc=client.read(); 
+Serial.print(cc); 
+} 
+}
+client.stop(); 
+delay(5000); 
+int httpCode = http.GET(); 
+Serial.print(httpCode); 
+if (httpCode > 0) 
+{ 
+digitalWrite(ledPin, HIGH); 
+delay(100); 
+if (httpCode == HTTP_CODE_OK) 
+{
+String payload = http.getString(); 
+Serial.print(" "); 
+Serial.print(payload); 
+}
+digitalWrite(ledPin, LOW); 
+delay(100); 
+}
+else 
+{
+Serial.printf("[HTTP] GET... , error: %s\n", http.errorToString(httpCode).c_str()); 
+}
+http.end(); 
+}
+pulseCount = 0; 
+attachInterrupt(sensorInterrupt, pulseCounter, FALLING); 
+}
+else if (WiFi.status() != WL_CONNECTED) 
+{
+startWIFI(); 
+}
+}
+
+void pulseCounter() 
+{
+pulseCount++; 
+}
+void startWIFI(void) 
+{
+ digitalWrite(ledPin, HIGH); 
+delay(100); 
+WiFi.begin(ssid, password); 
+Serial.print("Connecting to "); 
+Serial.print(ssid); 
+Serial.println(" ..."); 
+oldTime = 0; 
+int i = 0; 
+digitalWrite(ledPin, LOW); 
+delay(100); 
+while (WiFi.status() != WL_CONNECTED) 
+{
+digitalWrite(ledPin, HIGH); 
+delay(2000); 
+Serial.print(++i); 
+Serial.print('.'); 
+digitalWrite(ledPin, LOW); 
+delay(100); 
+}
+delay(2000); 
+Serial.print('\n'); 
+Serial.print("Connection established!"); 
+Serial.print("IP address:\t"); 
+Serial.print(WiFi.localIP()); 
+}
